@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tattoo AI Simulator v4</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: #0a0f14;
+            color: #00e0c8;
+            font-family: system-ui, -apple-system, sans-serif;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        h1 {
+            padding: 14px 0;
+            font-size: clamp(1.8rem, 5vw, 2.3rem);
+            text-align: center;
+            background: #1a2129;
+            border-bottom: 3px solid #00d4aa;
+            color: white;
+        }
+        .container {
+            display: flex;
+            flex: 1;
+            gap: 14px;
+            padding: 12px;
+            flex-wrap: wrap;
+        }
+        canvas {
+            border: 3px solid #00d4aa;
+            border-radius: 8px;
+            background: #1a1f26;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+            width: 100%;
+            height: auto;
+        }
+        .visor-title {
+            color: #00d4aa;
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 1.1rem;
+        }
+        .dashboard {
+            background: #1a2129;
+            border-top: 3px solid #00d4aa;
+            padding: 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: center;
+            justify-content: center;
+        }
+        button {
+            padding: 12px 24px;
+            background: #252f38;
+            color: #00e0c8;
+            border: 2px solid #00d4aa;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        button:hover { background: #00d4aa; color: #0a0f14; }
+        @media (max-width: 860px) {
+            .container { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+<h1>Tattoo AI Simulator v4</h1>
+
+<div class="container">
+    <div style="flex:1; min-width:320px;">
+        <canvas id="mainCanvas" width="940" height="620"></canvas>
+    </div>
+
+    <div style="width:340px; min-width:280px;">
+        <div class="visor-title">HUD VISOR — SKIN CROSS SECTION</div>
+        <canvas id="visorCanvas" width="340" height="560"></canvas>
+    </div>
+</div>
+
+<div class="dashboard">
+    <button onclick="startSim()">▶ START</button>
+    <button onclick="pauseSim()">⏸ PAUSE</button>
+    <button onclick="stopSim()">⏹ STOP</button>
+    <button onclick="resetSim()">RESET</button>
+
+    <div style="background:#252f38;padding:10px 16px;border-radius:8px;min-width:130px;text-align:center;">
+        Depth <span id="depthVal" style="color:#00ffcc;font-size:1.6rem;">2.15</span> mm
+    </div>
+    <div style="background:#252f38;padding:10px 16px;border-radius:8px;min-width:130px;text-align:center;">
+        Trauma <span id="traumaVal" style="color:#ff8866;font-size:1.6rem;">0.00</span>
+    </div>
+    <div style="background:#252f38;padding:10px 16px;border-radius:8px;min-width:130px;text-align:center;">
+        Ink <span id="inkVal" style="color:#ffee88;font-size:1.6rem;">0.0</span>%
+    </div>
+
+    <select id="pathType" onchange="changePath()" style="padding:10px;background:#252f38;color:#00e0c8;border:2px solid #00d4aa;border-radius:6px;">
+        <option value="line">Straight Line</option>
+        <option value="circle">Circle</option>
+    </select>
+</div>
+
+<script>
+// ==================== CORE CLASSES ====================
+class SkinModel {
+    constructor() { this.ink = 0; }
+    depositInk() { this.ink = Math.min(100, this.ink + 0.8); }
+    getInkCoverage() { return this.ink; }
+    reset() { this.ink = 0; }
+}
+
+class NeedleModel {
+    constructor() {
+        this.pathProgress = 0;
+        this.pathType = "line";
+        this.vibration = 0;
+    }
+    getPos() {
+        this.vibration = Math.sin(Date.now() / 25) * 2.2;
+        let x = 200, y = 180;
+        if (this.pathType === "line") {
+            x = 180 + this.pathProgress * 580;
+        } else {
+            x = 470 + Math.cos(this.pathProgress * Math.PI * 2) * 160;
+            y = 310 + Math.sin(this.pathProgress * Math.PI * 2) * 90;
+        }
+        return { x: x + this.vibration * 0.6, y: y + this.vibration * 0.4 };
+    }
+}
+
+// ==================== GLOBAL VARIABLES ====================
+let skin = new SkinModel();
+let needle = new NeedleModel();
+let currentDepth = 2.15;
+let trauma = 0;
+let running = false;
+let lastTime = 0;
+
+const mainCanvas = document.getElementById("mainCanvas");
+const ctx = mainCanvas.getContext("2d");
+
+const visorCanvas = document.getElementById("visorCanvas");
+const vctx = visorCanvas.getContext("2d");
+
+// ==================== RENDER FUNCTIONS ====================
+function renderMain() {
+    ctx.clearRect(0, 0, 940, 620);
+    ctx.fillStyle = "#3c2a22";
+    ctx.fillRect(0, 0, 940, 620);
+
+    let grad = ctx.createLinearGradient(0, 0, 0, 620);
+    grad.addColorStop(0, "rgba(255,230,180,0.28)");
+    grad.addColorStop(1, "transparent");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 940, 620);
+
+    ctx.fillStyle = "#1a120c";
+    ctx.fillRect(220, 180, 500, 260);
+
+    const pos = needle.getPos();
+    ctx.shadowColor = "#ff6666";
+    ctx.shadowBlur = 20;
+    ctx.strokeStyle = "#ee5555";
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(470, 110);
+    ctx.lineTo(pos.x, pos.y + currentDepth * 26);
+    ctx.stroke();
+
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = "#ffeecc";
+    ctx.fillRect(pos.x - 4, pos.y + currentDepth * 26 - 8, 8, 16);
+}
+
+function renderVisor() {
+    vctx.clearRect(0, 0, 340, 560);
+    vctx.fillStyle = "#1f1812";
+    vctx.fillRect(0, 0, 340, 560);
+
+    vctx.fillStyle = "#d4b89e"; vctx.fillRect(65, 130, 210, 60);
+    vctx.fillStyle = "#b88e72"; vctx.fillRect(65, 190, 210, 115);
+    vctx.fillStyle = "#9f6f4a"; vctx.fillRect(65, 305, 210, 95);
+
+    const posY = 90 + currentDepth * 52;
+    vctx.shadowBlur = 18;
+    vctx.shadowColor = "#ff6666";
+    vctx.strokeStyle = "#ee5555";
+    vctx.lineWidth = 18;
+    vctx.beginPath();
+    vctx.moveTo(170, 80);
+    vctx.lineTo(170, posY);
+    vctx.stroke();
+}
+
+// ==================== MAIN LOOP ====================
+function loop(ts = 0) {
+    if (!running) return;
+    const dt = Math.min((ts - lastTime) / 1000, 0.05);
+    lastTime = ts;
+
+    needle.pathProgress = (needle.pathProgress + 0.0018) % 1;
+
+    if (Math.random() < 0.35) skin.depositInk();
+    trauma = Math.max(0, trauma + (currentDepth > 2.8 ? 0.015 : -0.008));
+
+    renderMain();
+    renderVisor();
+
+    document.getElementById("depthVal").textContent = currentDepth.toFixed(2);
+    document.getElementById("traumaVal").textContent = trauma.toFixed(2);
+    document.getElementById("inkVal").textContent = skin.getInkCoverage().toFixed(1);
+
+    requestAnimationFrame(loop);
+}
+
+// ==================== CONTROLS ====================
+function startSim() { running = true; lastTime = performance.now(); requestAnimationFrame(loop); }
+function pauseSim() { running = false; }
+function stopSim() { running = false; }
+function resetSim() {
+    running = false;
+    skin.reset();
+    needle.pathProgress = 0;
+    trauma = 0;
+}
+function changePath() {
+    needle.pathType = document.getElementById("pathType").value;
+    needle.pathProgress = 0;
+}
+
+window.onload = () => {
+    console.log("%cTattoo AI Simulator v4 loaded successfully", "color:#00e0c8");
+};
+</script>
+</body>
+</html>
